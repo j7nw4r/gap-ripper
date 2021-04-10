@@ -3,3 +3,6 @@ test:
 
 clean_cache:
 	rm -rf ./_gap_cache/
+
+build:
+	go build -o gap_ripper ./cmd/gap-ripper/main.go

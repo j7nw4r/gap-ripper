@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/gocolly/colly/v2"
 	"github.com/pkg/errors"
@@ -19,7 +18,6 @@ const (
 )
 
 func main() {
-	fmt.Println("gap-ripper")
 	// Should have at least one product id.
 	if len(os.Args[1:]) <= 0 {
 		fmt.Println("Must supply Product Id.")
@@ -41,17 +39,15 @@ func processProduct(pid string) {
 		colly.UserAgent("Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"),
 	)
 
-	count := 1
 	c.OnHTML(gapImageSelector, func(e *colly.HTMLElement) {
-		fmt.Printf("%s %s\n", e.Attr("alt"), e.Attr("src"))
+		fmt.Printf("Saving %s at .%s\n", e.Attr("alt"), e.Attr("src"))
 
 		d := c.Clone()
 		d.OnResponse(func(r *colly.Response) {
-			if writeErr := writeImage(pid+strconv.Itoa(count), r.Body); writeErr != nil {
+			if writeErr := writeImage(pid, r.Body); writeErr != nil {
 				fmt.Println("Encountered error: " + writeErr.Error())
 				os.Exit(1)
 			}
-			count++
 		})
 		d.Visit(gapBaseURL + e.Attr("src"))
 	})
@@ -67,7 +63,7 @@ func writeImage(name string, data []byte) error {
 		return errors.Wrap(statErr, fmt.Sprintf("could not create %s", imgPath))
 	}
 	defer f.Close()
-
 	f.Write(data)
+
 	return nil
 }

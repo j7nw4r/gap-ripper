@@ -16,3 +16,6 @@
 
 # Cache to hold scrapping data
 _gap_cache/
+
+# Make artifacts
+gap_ripper
