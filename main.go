@@ -2,18 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 
 	"github.com/johnathan-walker/gap-ripper/scraper"
-	"github.com/pkg/errors"
-)
-
-const (
-	outputDirBase = "./gap_pictures/"
-	cacheDir      = "./_gap_cache/"
-	jpgSuffix     = ".jpg"
 )
 
 func main() {
@@ -35,17 +27,4 @@ func orchestrateScrapers() []scraper.Scraper {
 	}))
 
 	return scrapers
-}
-
-func writeImage(name string, data []byte) error {
-	imgPath := cacheDir + name + jpgSuffix
-
-	f, statErr := os.Create(imgPath)
-	if statErr != nil {
-		return errors.Wrap(statErr, fmt.Sprintf("could not create %s", imgPath))
-	}
-	defer f.Close()
-	f.Write(data)
-
-	return nil
 }

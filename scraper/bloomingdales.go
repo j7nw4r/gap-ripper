@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gocolly/colly/v2"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -16,9 +19,14 @@ var (
 
 const (
 	bloomingdalesBase                 = "https://www.bloomingdales.com"
-	bloomingdalesProductSelector      = ""
-	bloomingdalesNextCategorySelector = ""
+	bloomingdalesProductBase          = "www.bloomingdales.com/shop/product/"
+	bloomingdalesProductSelector      = "li div a"
+	bloomingdalesNextCategorySelector = ".nextArrow a"
 	bloomingdalesRootCategorySelector = ".adCatIcon a"
+
+	outputDirBase = "./gap_pictures/"
+	cacheDir      = "_gap_cache"
+	jpgSuffix     = ".jpeg"
 )
 
 // Bloomingdales scrapes Bloomingdales.
@@ -63,15 +71,17 @@ func (b *bloomingdales) Process(ctx context.Context) error {
 		close(productURLChan)
 	}()
 
+	wg2 := sync.WaitGroup{}
 	// Scrape product url for images.
-	for productURL := range productURLChan {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			scrapeProductURL(productURL)
-		}
+	for i := 0; i < 4; i++ {
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			scrapeProductURL(ctx, productURLChan)
+		}()
 	}
+
+	wg2.Wait()
 
 	return nil
 }
@@ -80,28 +90,29 @@ func (b *bloomingdales) Process(ctx context.Context) error {
 func collectProductURLs(ctx context.Context, page string, productURLChan chan string) {
 	// For each root page, scrape the product pages as well as the ext page if available.
 	rootCollector := colly.NewCollector()
-	rootCollector.UserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.114 Safari/537.36`
+	rootCollector.UserAgent = UserAgent
 
-	// Print Response metadata.
-	rootCollector.OnResponse(func(r *colly.Response) {
-		statusCodeMsg := fmt.Sprintf("URL: %s | Status Code: %d", r.Request.URL, r.StatusCode)
-		bloomingdalesLogger.Printf(statusCodeMsg)
+	// Limit the number of threads started by colly to two
+	// when visiting links which domains' matches "*httpbin.*" glob
+	rootCollector.Limit(&colly.LimitRule{
+		DomainRegexp: "*",
+		Parallelism:  2,
+		Delay:        5 * time.Second,
 	})
 
 	// Get all the categories.
 	rootCollector.OnHTML(bloomingdalesRootCategorySelector, func(e *colly.HTMLElement) {
 		categoryURL := fmt.Sprintf("%s%s", bloomingdalesBase, e.Attr("href"))
-		bloomingdalesLogger.Println("Category: " + categoryURL)
-		scrapeCategoryPage(rootCollector, categoryURL, productURLChan)
+		// bloomingdalesLogger.Println("CategoryURL: " + categoryURL)
+		scrapeCategoryPage(ctx, rootCollector, categoryURL, productURLChan)
 	})
 
 	// Print All Errors.
 	rootCollector.OnError(func(r *colly.Response, err error) {
 		errMsg := fmt.Sprintf(
-			"Error: %s\nURL: %s\nBody: %d",
+			"Error: %s\nURL: %s",
 			err,
-			r.Request.URL.RequestURI(),
-			r.StatusCode)
+			r.Request.URL.RequestURI())
 		bloomingdalesLogger.Println(errMsg)
 	})
 
@@ -109,24 +120,95 @@ func collectProductURLs(ctx context.Context, page string, productURLChan chan st
 }
 
 // scrapeCategoryPage scrapes a given URL. Gets all of the product URLs on a page and then finds the next category page if present.
-func scrapeCategoryPage(c *colly.Collector, categoryURL string, productURLChan chan string) {
+func scrapeCategoryPage(ctx context.Context, c *colly.Collector, categoryURL string, productURLChan chan string) {
 	d := c.Clone()
 
 	// Get all product links on the current page.
 	d.OnHTML(bloomingdalesProductSelector, func(e *colly.HTMLElement) {
-		productURL := fmt.Sprintf("a product URL from %s", categoryURL)
-		productURLChan <- productURL
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			// Only accept the URL from this element if it is a product URL
+			if productURL := fmt.Sprintf("%s%s", bloomingdalesBase, e.Attr("href")); strings.Contains(productURL, bloomingdalesProductBase) {
+				productURLChan <- productURL
+			}
+		}
 	})
 
 	// Get the next category page if available
 	d.OnHTML(bloomingdalesNextCategorySelector, func(e *colly.HTMLElement) {
-		categoryURL := fmt.Sprintf("%s%s", "", e.Attr("href"))
-		bloomingdalesLogger.Println("Category Next Page: " + categoryURL)
-		scrapeCategoryPage(c, categoryURL, productURLChan)
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			categoryURL := fmt.Sprintf("%s%s", bloomingdalesBase, e.Attr("href"))
+			scrapeCategoryPage(ctx, c, categoryURL, productURLChan)
+		}
 	})
+
+	d.Visit(categoryURL)
 }
 
 // scrapeProductURL scrapes the images off of the given product URL.
-func scrapeProductURL(productURL string) {
-	bloomingdalesLogger.Println("Viewing " + productURL)
+func scrapeProductURL(ctx context.Context, productURLChan chan string) {
+	for productURL := range productURLChan {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			c := colly.NewCollector()
+			c.UserAgent = UserAgent
+
+			c.OnHTML("picture img", func(e *colly.HTMLElement) {
+
+				d := c.Clone()
+
+				d.OnResponse(func(r *colly.Response) {
+					filename := strings.Split(r.FileName(), ".")[0]
+
+					// We don't want swatches
+					if !strings.Contains(filename, "swatches") {
+						filenameLen := len(filename)
+						if len(filename) > 50 {
+							filenameLen = 50
+						}
+						if writeErr := writeImage(filename[:filenameLen], r.Body); writeErr != nil {
+							bloomingdalesLogger.Fatalln(writeErr)
+						}
+					}
+				})
+
+				d.Visit(e.Attr(("src")))
+			})
+
+			// Print All Errors.
+			c.OnError(func(r *colly.Response, err error) {
+				errMsg := fmt.Sprintf(
+					"scrapeProductURL Error: %s\nURL: %s",
+					err,
+					r.Request.URL.RequestURI())
+				bloomingdalesLogger.Println(errMsg)
+			})
+
+			c.Visit(productURL)
+
+			time.Sleep(1 * time.Second)
+		}
+	}
+}
+
+func writeImage(name string, data []byte) error {
+	imgPath := cacheDir + "/" + name + jpgSuffix
+	bloomingdalesLogger.Println(imgPath + " being created")
+
+	os.Mkdir(cacheDir, 0775)
+	f, statErr := os.Create(imgPath)
+	if statErr != nil {
+		return errors.Wrap(statErr, fmt.Sprintf("could not create %s", imgPath))
+	}
+	defer f.Close()
+	f.Write(data)
+
+	return nil
 }
