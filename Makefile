@@ -1,8 +1,8 @@
 test:
-	go run cmd/gap-ripper/main.go 632140012
+	go run main.go
 
 clean_cache:
 	rm -rf ./_gap_cache/
 
 build:
-	go build -o gap_ripper ./cmd/gap-ripper/main.go
+	go build -o gap_ripper main.go
