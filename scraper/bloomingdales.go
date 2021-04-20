@@ -161,7 +161,6 @@ func scrapeProductURL(ctx context.Context, productURLChan chan string) {
 			c.UserAgent = UserAgent
 
 			c.OnHTML("picture img", func(e *colly.HTMLElement) {
-
 				d := c.Clone()
 
 				d.OnResponse(func(r *colly.Response) {
