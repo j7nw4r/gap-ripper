@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 
@@ -9,6 +10,7 @@ import (
 )
 
 func main() {
+	fmt.Println("Testing 1 2 3")
 	// Process retailers
 	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
 	for _, retailer := range orchestrateScrapers() {
